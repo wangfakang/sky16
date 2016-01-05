@@ -1,0 +1,356 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Sky16 by wangfakang</title>
+
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/github-light.css">
+    <script src="javascripts/scale.fix.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1 class="header">Sky16</h1>
+        <p class="header">nginx dynamic mange upstream</p>
+
+        <ul>
+          <li class="download"><a class="buttons" href="https://github.com/wangfakang/sky16/zipball/master">Download ZIP</a></li>
+          <li class="download"><a class="buttons" href="https://github.com/wangfakang/sky16/tarball/master">Download TAR</a></li>
+          <li><a class="buttons github" href="https://github.com/wangfakang/sky16">View On GitHub</a></li>
+        </ul>
+
+        <p class="header">This project is maintained by <a class="header name" href="https://github.com/wangfakang">wangfakang</a></p>
+
+
+      </header>
+      <section>
+        <p>nginx动态upstream管理方案:</p>
+
+<h1>
+<a id="目录" class="anchor" href="#%E7%9B%AE%E5%BD%95" aria-hidden="true"><span class="octicon octicon-link"></span></a>目录</h1>
+
+<ul>
+<li>
+<a href="#%E8%A7%A3%E5%86%B3%E6%96%B9%E6%A1%88">一.解决方案</a><br>
+</li>
+<li>
+<a href="#%E9%A1%B9%E7%9B%AE%E8%83%8C%E6%99%AF">二.项目背景</a><br>
+</li>
+<li>
+<a href="#%E8%A7%A3%E5%86%B3%E7%9A%84%E9%97%AE%E9%A2%98">三.解决的问题</a><br>
+</li>
+<li>
+<a href="#%E4%BD%BF%E7%94%A8%E6%96%B9%E6%B3%95">四.使用方法</a><br>
+</li>
+<li>
+<a href="#%E5%93%8D%E5%BA%94%E5%AD%97%E6%AE%B5%E5%90%AB%E4%B9%89">五.响应字段含义</a><br>
+</li>
+<li><a href="#%E4%BD%BF%E7%94%A8%E6%B3%A8%E6%84%8F">六.使用注意</a></li>
+</ul>
+
+<h1>
+<a id="解决方案" class="anchor" href="#%E8%A7%A3%E5%86%B3%E6%96%B9%E6%A1%88" aria-hidden="true"><span class="octicon octicon-link"></span></a>解决方案</h1>
+
+<p>1.使用我们组内在agentzh的ngx_lua_upstream_module基础上开发的<a href="https://github.com/SinaMSRE/lua-upstream-nginx-module">lua_upstream_module</a>.      </p>
+
+<ul>
+<li>该方案目前已经可以和tengine的dyups结合使用,不仅可以粗粒度的动态修改upstream,
+还可以细粒度的管理指定的upstream中的server的修改下面会详细介绍该项目.<br>
+</li>
+</ul>
+
+<p>2.使用agentzh开发饿balancer_by_lua指令,该指令在前面<a href="http://wangfakang.github.io/sky9/">博客</a>简单剖析过.     </p>
+
+<ul>
+<li>该模块比较灵活, 可以根据每请求粒度的定制化后端peer.不过需要自己实现相应饿负载均衡算法.<br>
+</li>
+</ul>
+
+<p>3.使用tengine的<a href="https://github.com/yzprofile/ngx_http_dyups_module">dyups</a>模块.</p>
+
+<ul>
+<li>该模块只可以比较粗粒度的管理upstream,比如删除/增加整个upstream等.</li>
+</ul>
+
+<p>综合上述问题可以择优选择,下面介绍新浪二次开发的<a href="https://github.com/SinaMSRE/lua-upstream-nginx-module">lua_upstream_module</a>.   </p>
+
+<h1>
+<a id="项目背景" class="anchor" href="#%E9%A1%B9%E7%9B%AE%E8%83%8C%E6%99%AF" aria-hidden="true"><span class="octicon octicon-link"></span></a>项目背景</h1>
+
+<p>当nginx作为七层进行负载均衡的时候,由于扩容或者缩容的时候都得手工的在nginx的配置文件中upstream指令中去增加
+或者删除机器server,然后进行reload使得nginx重新加载新的配置文件.那么这样就会越到几个问题:   </p>
+
+<ul>
+<li>1.由于人肉操作,难免会写错配置文件导致nginx无法reload等问题.</li>
+<li>2.nginx的reload的时候会有一些性能以及丢请求的问题.<br>
+</li>
+</ul>
+
+<p><a href="#%E7%9B%AE%E5%BD%95">目录</a></p>
+
+<h1>
+<a id="解决的问题" class="anchor" href="#%E8%A7%A3%E5%86%B3%E7%9A%84%E9%97%AE%E9%A2%98" aria-hidden="true"><span class="octicon octicon-link"></span></a>解决的问题</h1>
+
+<ul>
+<li>1.当给nginx的upstream增加server的时候不用reload nginx使其动态生效.</li>
+<li>2.可以避免nginx在reload的时候丢失请求.</li>
+<li>3.避免在nginx reload的时候占用大量内存[当nginx的worker个数比较多的时候].</li>
+<li>4.可以和服务发现进行整合,避免人肉的去修改,使其趋于自动化.<br>
+</li>
+</ul>
+
+<p><a href="#%E7%9B%AE%E5%BD%95">目录</a>  </p>
+
+<h1>
+<a id="使用方法" class="anchor" href="#%E4%BD%BF%E7%94%A8%E6%96%B9%E6%B3%95" aria-hidden="true"><span class="octicon octicon-link"></span></a>使用方法</h1>
+
+<p>提供下列REST HTTP接口,形如"127.0.0.1:80/action=${opreation_name}%args=${operation_args}":  </p>
+
+<ul>
+<li>
+<p>1.给upstream中server增加一个server<br>
+ <code>http://localhost:port/dyups_admin/?action=add_server&amp;upstream=bar&amp;ip=127.0.0.1&amp;port=81&amp;weight=2&amp;max_fails=2&amp;fail_timeout=10</code><br>
+ 其中参数说明:    </p>
+
+<ul>
+<li>action: 代表要执行的操作</li>
+<li>upstream: 操作当前nginx那个upstream</li>
+<li>ip: 新增加server的ip</li>
+<li>port: 新增加server的port</li>
+<li>weight: 为新的server设置权值,注意(该参数是可选参数default 1)</li>
+<li>max_fails: 为新的server设置max_fails,注意(该参数是可选参数default 1)</li>
+<li>fail_timeout: 为新的server设置fail_timeout,注意(该参数是可选参数default 10)</li>
+</ul>
+</li>
+<li>
+<p>2.给upstream中后端peer增加一个server<br>
+ <code>http://localhost:port/dyups_admin/?action=add_peer&amp;upstream=bar&amp;ip=127.0.0.1&amp;port=81</code><br>
+ 其中参数说明:    </p>
+
+<ul>
+<li>action: 代表要执行的操作</li>
+<li>upstream: 操作当前nginx那个upstream</li>
+<li>ip: 新增加server的ip</li>
+<li>port: 新增加server的port</li>
+</ul>
+</li>
+<li>
+<p>3.删除upstream中server的一个server<br>
+ <code>http://localhost:port/dyups_admin/?action=remove_server&amp;upstream=bar&amp;ip=127.0.0.1&amp;port=81</code><br>
+ 其中参数说明:    </p>
+
+<ul>
+<li>action: 代表要执行的操作</li>
+<li>upstream: 操作当前nginx那个upstream</li>
+<li>ip: 新增加server的ip</li>
+<li>port: 新增加server的port</li>
+</ul>
+</li>
+<li>
+<p>4.删除upstream中后端peer的一个server<br>
+ <code>http://localhost:port/dyups_admin/?action=remove_peer&amp;upstream=bar&amp;ip=127.0.0.1&amp;port=81&amp;weight=2&amp;max_fails=2&amp;fail_timeout=10</code><br>
+ 其中参数说明:    </p>
+
+<ul>
+<li>action: 代表要执行的操作</li>
+<li>upstream: 操作当前nginx那个upstream</li>
+<li>ip: 新增加server的ip</li>
+<li>port: 新增加server的port</li>
+</ul>
+</li>
+<li>
+<p>5.查看upstream中的servers信息<br>
+ <code>http://localhost:port/dyups_admin/?action=get_serves</code><br>
+ 其中参数说明:    </p>
+
+<ul>
+<li>action: 代表要执行的操作</li>
+</ul>
+</li>
+<li>
+<p>6.查看upstream中后端peer的servers信息<br>
+ <code>http://localhost:port/dyups_admin/?action=get_primary_peers</code><br>
+ 其中参数说明:    </p>
+
+<ul>
+<li>action: 代表要执行的操作</li>
+</ul>
+</li>
+<li>
+<p>7.查看指定机器nginx的upetreams信息<br>
+ <code>http://localhost:port/dyups_admin/?action=get_upstreams</code><br>
+ 其中参数说明:    </p>
+
+<ul>
+<li>action: 代表要执行的操作</li>
+</ul>
+</li>
+<li>
+<p>8.查看upstream中后备servers信息<br>
+ <code>http://localhost:port/dyups_admin/?action=get_backup_peers</code><br>
+ 其中参数说明:    </p>
+
+<ul>
+<li>action: 代表要执行的操作</li>
+</ul>
+</li>
+<li>
+<p>9.增加一个upstream为指定nginx<br>
+ <code>http://localhost:port/dyups_admin/?action=add_upstream&amp;upstream=new_bar&amp;servers=server 127.0.0.1:81;server 127.0.0.1:82;</code><br>
+ 其中参数说明:    </p>
+
+<ul>
+<li>action: 代表要执行的操作</li>
+<li>upstream: 为当前nginx那个upstream的名称</li>
+<li>servers: 指定新的upstream中的server信息<br>
+<code>注意:</code>最少要有一个server,若新增加的upstream的名字是nginx中已经有的upstream,则会覆盖调旧的upstream信息.<br>
+<code>注意:</code>其中servers字段不同的server之间要使用分号";"隔开.<br>
+</li>
+</ul>
+</li>
+<li>
+<p>10.删除一个upstream给指定nginx<br>
+ <code>http://localhost:port/dyups_admin/?action=remove_upstream&amp;upstream=new_bar</code><br>
+ 其中参数说明:    </p>
+
+<ul>
+<li>action: 代表要执行的操作</li>
+<li>upstream: 想要删除的那个upstream的名称<br>
+</li>
+</ul>
+</li>
+</ul>
+
+<p><a href="#%E7%9B%AE%E5%BD%95">目录</a></p>
+
+<h1>
+<a id="响应字段含义" class="anchor" href="#%E5%93%8D%E5%BA%94%E5%AD%97%E6%AE%B5%E5%90%AB%E4%B9%89" aria-hidden="true"><span class="octicon octicon-link"></span></a>响应字段含义</h1>
+
+<p>上述使用方法都是使用的rest http的方式,其http响应结果是json字符串形如:     </p>
+
+<h3>
+<a id="修改操作" class="anchor" href="#%E4%BF%AE%E6%94%B9%E6%93%8D%E4%BD%9C" aria-hidden="true"><span class="octicon octicon-link"></span></a>修改操作:</h3>
+
+<p><code>curl "127.0.0.1:8045/admin/?action=add_server&amp;upstream=bar&amp;ip=127.0.0.1&amp;port=82"</code></p>
+
+<div class="highlight highlight-source-json"><pre>{
+    <span class="pl-s"><span class="pl-pds">"</span>code<span class="pl-pds">"</span></span>: <span class="pl-c1">200</span>,
+    <span class="pl-s"><span class="pl-pds">"</span>data<span class="pl-pds">"</span></span>: <span class="pl-s"><span class="pl-pds">"</span>add_server success<span class="pl-pds">"</span></span>
+}</pre></div>
+
+<h3>
+<a id="查询操作" class="anchor" href="#%E6%9F%A5%E8%AF%A2%E6%93%8D%E4%BD%9C" aria-hidden="true"><span class="octicon octicon-link"></span></a>查询操作:</h3>
+
+<p><code>curl   "http://localhost:port/dyups_admin/?action=get_serves"</code>   </p>
+
+<div class="highlight highlight-source-json"><pre>{
+    <span class="pl-s"><span class="pl-pds">"</span>code<span class="pl-pds">"</span></span>: <span class="pl-c1">200</span>,
+    <span class="pl-s"><span class="pl-pds">"</span>data<span class="pl-pds">"</span></span>: {
+        <span class="pl-s"><span class="pl-pds">"</span>bar<span class="pl-pds">"</span></span>: [
+            {
+                <span class="pl-s"><span class="pl-pds">"</span>addr<span class="pl-pds">"</span></span>: <span class="pl-s"><span class="pl-pds">"</span>127.0.0.1:80<span class="pl-pds">"</span></span>,
+                <span class="pl-s"><span class="pl-pds">"</span>fail_timeout<span class="pl-pds">"</span></span>: <span class="pl-c1">10</span>,
+                <span class="pl-s"><span class="pl-pds">"</span>max_fails<span class="pl-pds">"</span></span>: <span class="pl-c1">1</span>,
+                <span class="pl-s"><span class="pl-pds">"</span>weight<span class="pl-pds">"</span></span>: <span class="pl-c1">1</span>
+            },
+            {
+                <span class="pl-s"><span class="pl-pds">"</span>addr<span class="pl-pds">"</span></span>: <span class="pl-s"><span class="pl-pds">"</span>127.0.0.1:81<span class="pl-pds">"</span></span>,
+                <span class="pl-s"><span class="pl-pds">"</span>fail_timeout<span class="pl-pds">"</span></span>: <span class="pl-c1">10</span>,
+                <span class="pl-s"><span class="pl-pds">"</span>max_fails<span class="pl-pds">"</span></span>: <span class="pl-c1">1</span>,
+                <span class="pl-s"><span class="pl-pds">"</span>weight<span class="pl-pds">"</span></span>: <span class="pl-c1">1</span>
+            }
+        ]
+    }
+}</pre></div>
+
+<p>其中json的结构总共分为2个字段:    </p>
+
+<ul>
+<li> 1.code字段含义:<br>
+ code表示其该次操作的请求响应码[200表示执行成功,500表示操作失败].<br>
+</li>
+<li> 2.data字段含义:<br>
+ data表示其数据部分[若该操作是修改操作,则数据字段表示操作的结果的信息.若是查询操作:则data字段是查询返回的数据].<br>
+</li>
+</ul>
+
+<p><a href="#%E7%9B%AE%E5%BD%95">目录</a></p>
+
+<h1>
+<a id="使用注意" class="anchor" href="#%E4%BD%BF%E7%94%A8%E6%B3%A8%E6%84%8F" aria-hidden="true"><span class="octicon octicon-link"></span></a>使用注意</h1>
+
+<h3>
+<a id="一其中add_server和add_peer两个操作的解析" class="anchor" href="#%E4%B8%80%E5%85%B6%E4%B8%ADadd_server%E5%92%8Cadd_peer%E4%B8%A4%E4%B8%AA%E6%93%8D%E4%BD%9C%E7%9A%84%E8%A7%A3%E6%9E%90" aria-hidden="true"><span class="octicon octicon-link"></span></a>一.其中<code>add_server</code>和<code>add_peer</code>两个操作的解析:</h3>
+
+<ul>
+<li>add_server:<br>
+
+<ul>
+<li>该操作是向指定upstream中的servers列表中增加一个server.<br>
+</li>
+</ul>
+</li>
+<li>add_peer: 
+
+<ul>
+<li>该操作是向指定upstream中的后端peers列表中增加一个peer(真正的后端机器)在进行增加peer的时候会进行查询这个peer是否在upstream中的servers列表中,若不在是不允许添加的
+所以在执行<code>add_peer</code>之前一定要执行<code>add_server</code>操作.<br>
+</li>
+</ul>
+</li>
+</ul>
+
+<p><a href="#%E7%9B%AE%E5%BD%95">目录</a></p>
+
+<h1>
+<a id="communite--" class="anchor" href="#communite--" aria-hidden="true"><span class="octicon octicon-link"></span></a>Communite  </h1>
+
+<p>在使用中有任何问题，欢迎反馈给我，可以用以下联系方式跟我交流</p>
+
+<ul>
+<li>邮件(1031379296#qq.com, 把#换成@)</li>
+<li>QQ: 1031379296</li>
+<li>weibo: <a href="http://weibo.com/fakangwang">@王发康</a>
+</li>
+</ul>
+
+<h1>
+<a id="thx" class="anchor" href="#thx" aria-hidden="true"><span class="octicon octicon-link"></span></a>Thx</h1>
+
+<ul>
+<li>chunshengsterATgmail.com</li>
+</ul>
+
+<h1>
+<a id="author" class="anchor" href="#author" aria-hidden="true"><span class="octicon octicon-link"></span></a>Author</h1>
+
+<ul>
+<li>Linux\nginx\golang\c\c++爱好者</li>
+<li>欢迎一起交流  一起学习# </li>
+<li>Others say good and Others good</li>
+</ul>
+      </section>
+      <footer>
+        <p><small>Hosted on <a href="https://pages.github.com">GitHub Pages</a> using the Dinky theme</small></p>
+      </footer>
+    </div>
+    <!--[if !IE]><script>fixScale(document);</script><![endif]-->
+		          <script type="text/javascript">
+            var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+            document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+          </script>
+          <script type="text/javascript">
+            try {
+              var pageTracker = _gat._getTracker("nginx dynamic mange upstream");
+            pageTracker._trackPageview();
+            } catch(err) {}
+          </script>
+
+  </body>
+</html>
