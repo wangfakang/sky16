@@ -115,7 +115,7 @@
 <ul>
 <li>
 <p>1.给upstream中server增加一个server<br>
- <code>http://localhost:port/dyups_admin/?action=add_server&amp;upstream=bar&amp;ip=127.0.0.1&amp;port=81&amp;weight=2&amp;maxfails=2&amp;failtimeout=10</code><br>
+ <code>http://localhost:port/dyups_admin/?action=add_server&amp;upstream=bar&amp;ip=127.0.0.1&amp;port=81&amp;weight=2&amp;maxfails=2&amp;failtimeout=10&amp;backup=false</code><br>
  其中参数说明:    </p>
 
 <ul>
@@ -126,6 +126,7 @@
 <li>weight: 为新的server设置权值,注意(该参数是可选参数default 1)</li>
 <li>maxfails: 为新的server设置max_fails,注意(该参数是可选参数default 1)</li>
 <li>failtimeout: 为新的server设置fail_timeout,注意(该参数是可选参数default 10)</li>
+<li>backup: 设置新的server是否是后备服务器，注意(取值为true或者false)</li>
 </ul>
 </li>
 <li>
